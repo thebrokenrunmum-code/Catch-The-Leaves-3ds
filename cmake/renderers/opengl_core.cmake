@@ -1,0 +1,37 @@
+if(TARGET renderer_interface)
+    return()
+endif()
+add_library(renderer_interface INTERFACE)
+
+if(NINTENDO_SWITCH)
+	find_path(SWITCH_GLAD_INCLUDE_DIR glad/glad.h PATHS "$ENV{DEVKITPRO}/portlibs/switch/include" "/opt/devkitpro/portlibs/switch/include")
+	find_library(SWITCH_GLAD_LIBRARY glad PATHS "$ENV{DEVKITPRO}/portlibs/switch/lib" "/opt/devkitpro/portlibs/switch/lib")
+	if(NOT SWITCH_GLAD_INCLUDE_DIR OR NOT SWITCH_GLAD_LIBRARY)
+		message(FATAL_ERROR "switch-glad not found. Install it with: (dkp-)pacman -S switch-glad")
+	endif()
+	target_include_directories(renderer_interface INTERFACE "${SWITCH_GLAD_INCLUDE_DIR}")
+	target_link_libraries(renderer_interface INTERFACE "${SWITCH_GLAD_LIBRARY}" EGL glapi drm_nouveau)
+else()
+	cl_add_dep(renderer_interface GLAD)
+endif()
+
+cl_add_dep(renderer_interface stb_truetype)
+
+if(NINTENDO_SWITCH)
+	set(SE_WINDOWING_VALID_OPTIONS "sdl2")
+
+	if(NOT DEFINED SE_AUDIO_ENGINE_DEFAULT)
+		set(SE_AUDIO_ENGINE_DEFAULT "sdl2")
+	endif()
+elseif(NOT LIBRETRO)
+	set(SE_WINDOWING_VALID_OPTIONS "sdl2" "sdl1" "sdl3" "glfw")
+
+	if(WIN32)
+		list(APPEND SE_WINDOWING_VALID_OPTIONS "win32")
+		target_link_libraries(renderer_interface INTERFACE opengl32)
+	endif()
+
+	if(NOT DEFINED SE_AUDIO_ENGINE_DEFAULT)
+		set(SE_AUDIO_ENGINE_DEFAULT "sdl2")
+	endif()
+endif()
