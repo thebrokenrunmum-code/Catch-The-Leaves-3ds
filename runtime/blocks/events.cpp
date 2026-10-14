@@ -1,0 +1,91 @@
+#include "blockUtils.hpp"
+#include <input.hpp>
+#include <types.hpp>
+
+SCRATCH_BLOCK(event, whenflagclicked) {
+    return BlockResult::CONTINUE;
+}
+
+SCRATCH_BLOCK(event, whenbackdropswitchesto) {
+    return BlockResult::CONTINUE;
+}
+
+SCRATCH_BLOCK(event, whenthisspriteclicked) {
+    return BlockResult::CONTINUE;
+}
+
+SCRATCH_BLOCK(event, whenstageclicked) {
+    return BlockResult::CONTINUE;
+}
+
+SCRATCH_BLOCK(event, broadcast) {
+    std::string broadcast;
+
+    if (!Scratch::getInputValueAs(block, "BROADCAST_INPUT", thread, sprite, broadcast)) return BlockResult::REPEAT;
+    std::transform(broadcast.begin(), broadcast.end(), broadcast.begin(), ::tolower);
+
+    for (auto &spr : Scratch::sprites) {
+        if (spr->hats["event_whenbroadcastreceived"].empty()) continue;
+        for (Block *hat : spr->hats["event_whenbroadcastreceived"]) {
+
+            std::string broadcastOption = Scratch::getFieldValue(*hat, "BROADCAST_OPTION");
+            std::transform(broadcastOption.begin(), broadcastOption.end(), broadcastOption.begin(), ::tolower);
+
+            if (broadcastOption == broadcast) {
+                BlockExecutor::startThread(spr, hat);
+            }
+        }
+    }
+
+    return BlockResult::CONTINUE;
+}
+
+SCRATCH_BLOCK(event, broadcastandwait) {
+    BlockState *state = thread->getState(block);
+    if (state->completedSteps == 0) {
+        std::string broadcast;
+
+        if (!Scratch::getInputValueAs(block, "BROADCAST_INPUT", thread, sprite, broadcast)) return BlockResult::REPEAT;
+        std::transform(broadcast.begin(), broadcast.end(), broadcast.begin(), ::tolower);
+
+        for (auto &spr : Scratch::sprites) {
+            if (spr->hats["event_whenbroadcastreceived"].empty()) continue;
+            for (Block *hat : spr->hats["event_whenbroadcastreceived"]) {
+
+                std::string broadcastOption = Scratch::getFieldValue(*hat, "BROADCAST_OPTION");
+                std::transform(broadcastOption.begin(), broadcastOption.end(), broadcastOption.begin(), ::tolower);
+
+                if (broadcastOption == broadcast) {
+                    state->threads.push_back(BlockExecutor::startThread(spr, hat)->id);
+                }
+            }
+        }
+
+        state->completedSteps = 1;
+        if (state->threads.empty()) {
+            thread->eraseState(block);
+            return BlockResult::CONTINUE;
+        }
+        return BlockResult::REPEAT;
+    }
+
+    for (auto &stateID : state->threads) {
+        for (auto &spriteThread : BlockExecutor::threads) {
+            if (spriteThread->id != stateID) continue;
+            if (!spriteThread->finished) return BlockResult::REPEAT;
+        }
+    }
+    thread->eraseState(block);
+    return BlockResult::CONTINUE;
+}
+
+// FIXME: This is currently very poorly optimized. Please fix it, thank you.
+SCRATCH_BLOCK(event, whenkeypressed) {
+    return BlockResult::CONTINUE;
+}
+
+SCRATCH_BLOCK(event, whenbroadcastreceived) {
+    return BlockResult::CONTINUE;
+}
+
+SCRATCH_SHADOW_BLOCK(event_touchingobjectmenu, TOUCHINGOBJECTMENU)

@@ -1,0 +1,213 @@
+#include "value.hpp"
+#include "math.hpp"
+#include <array>
+#include <cctype>
+#include <os.hpp>
+#include <regex>
+#include <string_view>
+
+using Math::caseInsensitiveEqual;
+using Math::caseInsensitiveLess;
+
+Value::Value(int val) : tag(Tag::Double) { storage.d = static_cast<double>(val); }
+
+Value::Value(double val) : tag(Tag::Double) { storage.d = val; }
+
+Value::Value(std::string val) : tag(Tag::String) { new (&storage.s) std::shared_ptr<const std::string>(std::make_shared<const std::string>(std::move(val))); }
+
+Value::Value(std::shared_ptr<const std::string> val) : tag(Tag::String) { new (&storage.s) std::shared_ptr<const std::string>(std::move(val)); }
+
+Value::Value(bool val) : tag(Tag::Bool) { storage.b = val; }
+
+Value::Value(Color val) : tag(Tag::Color) { storage.c = val; }
+
+Value::Value(Undefined) : tag(Tag::Undefined) {}
+
+double Value::asDouble() const {
+    if (isDouble()) {
+        if (isNaN()) return 0.0;
+        return storage.d;
+    } else if (isString()) {
+        auto &strValue = *storage.s;
+        return Math::parseNumber(strValue).value_or(0);
+    } else if (isColor()) {
+        const ColorRGBA rgb = CSBT2RGBA(storage.c);
+        return rgb.r * 0x10000 + rgb.g * 0x100 + rgb.b;
+    } else if (isBoolean()) {
+        return storage.b ? 1 : 0;
+    }
+
+    return 0.0;
+}
+
+std::string Value::asString() const {
+    if (isDouble()) {
+        return Math::toString(storage.d);
+    } else if (isString()) {
+        return *storage.s;
+    } else if (isBoolean()) {
+        return storage.b ? "true" : "false";
+    } else if (isUndefined()) {
+        return "undefined";
+    } else if (isColor()) {
+        const ColorRGBA rgb = CSBT2RGBA(storage.c);
+        const char hex_chars[] = "0123456789abcdef";
+        const unsigned char r = static_cast<unsigned char>(rgb.r);
+        const unsigned char g = static_cast<unsigned char>(rgb.g);
+        const unsigned char b = static_cast<unsigned char>(rgb.b);
+        std::string hex_str = "#";
+        hex_str += hex_chars[r >> 4];
+        hex_str += hex_chars[r & 0x0F];
+        hex_str += hex_chars[g >> 4];
+        hex_str += hex_chars[g & 0x0F];
+        hex_str += hex_chars[b >> 4];
+        hex_str += hex_chars[b & 0x0F];
+        return hex_str;
+    }
+
+    return "";
+}
+
+bool Value::asBoolean() const {
+    if (isBoolean()) {
+        return storage.b;
+    }
+    if (isDouble()) {
+        return storage.d != 0.0 && !isNaN();
+    }
+    if (isString()) {
+        std::string strValue = *storage.s;
+        std::transform(strValue.begin(), strValue.end(), strValue.begin(), ::tolower);
+        return strValue != "" && strValue != "0" && strValue != "false";
+    }
+    if (isColor()) {
+        const ColorRGBA rgb = CSBT2RGBA(storage.c);
+        return rgb.r != 0 || rgb.g != 0 || rgb.b != 0 || rgb.a != 0;
+    }
+    return false;
+}
+
+Color Value::asColor() const {
+    if (isString()) {
+        std::string stringValue = asString();
+        if (stringValue[0] == '#') {
+            std::string r, g, b;
+            if (std::regex_match(stringValue, std::regex("^#[\\dA-Fa-f]{3}$"))) {
+                stringValue = "#" + std::string(2, stringValue[1]) + std::string(2, stringValue[2]) + std::string(2, stringValue[3]);
+            }
+            if (std::regex_match(stringValue, std::regex("^#[\\dA-Fa-f]{6}$"))) {
+                r = stringValue.substr(1, 2);
+                g = stringValue.substr(3, 2);
+                b = stringValue.substr(5, 2);
+                return RGBA2CSBO({static_cast<float>(std::stoi(r, 0, 16)), static_cast<float>(std::stoi(g, 0, 16)), static_cast<float>(std::stoi(b, 0, 16)), 255});
+            } else return {0, 0, 0, 0};
+        }
+    }
+    const double RGBA = asDouble();
+    return RGBA2CSBO({static_cast<float>(static_cast<unsigned int>(RGBA / 0x10000) % 0x100), static_cast<float>(static_cast<unsigned int>(RGBA / 0x100) % 0x100), static_cast<float>(static_cast<unsigned int>(RGBA) % 0x100), static_cast<float>(static_cast<unsigned int>(RGBA / 0x1000000) % 0x100)});
+}
+
+ColorRGBA Value::asRGB() const {
+    if (isString()) {
+        std::string stringValue = asString();
+        if (stringValue[0] == '#') {
+            if (std::regex_match(stringValue, std::regex("^#[\\dA-Fa-f]{3}$"))) {
+                stringValue = "#" + std::string(2, stringValue[1]) + std::string(2, stringValue[2]) + std::string(2, stringValue[3]);
+            }
+            if (std::regex_match(stringValue, std::regex("^#[\\dA-Fa-f]{6}$"))) {
+                return {static_cast<float>(std::stoi(stringValue.substr(1, 2), 0, 16)),
+                        static_cast<float>(std::stoi(stringValue.substr(3, 2), 0, 16)),
+                        static_cast<float>(std::stoi(stringValue.substr(5, 2), 0, 16)), 255};
+            } else return {0, 0, 0, 255};
+        }
+    }
+    const double RGBA = asDouble();
+    return {static_cast<float>(static_cast<unsigned int>(RGBA / 0x10000) % 0x100), static_cast<float>(static_cast<unsigned int>(RGBA / 0x100) % 0x100), static_cast<float>(static_cast<unsigned int>(RGBA) % 0x100), static_cast<float>(static_cast<unsigned int>(RGBA / 0x1000000) % 0x100)};
+}
+
+bool Value::operator==(const Value &other) const {
+    if (isDouble() && other.isDouble() && !isNaN() && !other.isNaN()) return storage.d == other.storage.d;
+    if (isBoolean() && other.isBoolean()) return storage.b == other.storage.b;
+    if (isColor() && other.isColor()) return storage.c == other.storage.c;
+
+    std::string ownedA, ownedB;
+    const std::string *strA = tryGetStringRef();
+    if (!strA) {
+        ownedA = asString();
+        strA = &ownedA;
+    }
+    const std::string *strB = other.tryGetStringRef();
+    if (!strB) {
+        ownedB = other.asString();
+        strB = &ownedB;
+    }
+
+    if (!std::all_of(strA->begin(), strA->end(), [](unsigned char c) { return (std::isspace(c) && c != '\t'); }) &&
+        !std::all_of(strB->begin(), strB->end(), [](unsigned char c) { return (std::isspace(c) && c != '\t'); })) {
+        if (isNumeric() && other.isNumeric() && !isNaN() && !other.isNaN()) {
+            return asDouble() == other.asDouble();
+        }
+    }
+
+    return caseInsensitiveEqual(*strA, *strB);
+}
+
+bool Value::operator<(const Value &other) const {
+    if (isNumeric() && other.isNumeric() && !isNaN() && !other.isNaN()) {
+        return get<double>() < other.get<double>();
+    }
+
+    std::string ownedA, ownedB;
+    const std::string *strA = tryGetStringRef();
+    if (!strA) {
+        ownedA = asString();
+        strA = &ownedA;
+    }
+    const std::string *strB = other.tryGetStringRef();
+    if (!strB) {
+        ownedB = other.asString();
+        strB = &ownedB;
+    }
+    return caseInsensitiveLess(*strA, *strB);
+}
+
+bool Value::operator>(const Value &other) const {
+    if (isNumeric() && other.isNumeric() && !isNaN() && !other.isNaN()) {
+        return get<double>() > other.get<double>();
+    }
+
+    std::string ownedA, ownedB;
+    const std::string *strA = tryGetStringRef();
+    if (!strA) {
+        ownedA = asString();
+        strA = &ownedA;
+    }
+    const std::string *strB = other.tryGetStringRef();
+    if (!strB) {
+        ownedB = other.asString();
+        strB = &ownedB;
+    }
+    return caseInsensitiveLess(*strB, *strA);
+}
+
+bool Value::isScratchInt() {
+    if (isDouble()) {
+        double val = asDouble();
+        if (std::isnan(val)) return true;
+        return std::fabs(val) < 1e21 && std::floor(val) == val;
+    }
+    if (isBoolean()) return true;
+    if (isString()) return asString().find('.') == std::string::npos;
+    return false;
+}
+
+Value Value::fromJson(const nlohmann::json &jsonVal) {
+    if (jsonVal.is_number()) return Value(jsonVal.get<double>());
+    if (jsonVal.is_string()) return Value(jsonVal.get<std::string>());
+    if (jsonVal.is_boolean()) return Value(jsonVal.get<bool>());
+    if (jsonVal.is_array()) {
+        if (jsonVal.size() > 1) return fromJson(jsonVal[1]);
+        return Value(0);
+    }
+    return Value(0);
+}
